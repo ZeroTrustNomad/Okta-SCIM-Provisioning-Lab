@@ -24,6 +24,12 @@ SCIM_ERROR_SCHEMA = (
 SCIM_PATCH_SCHEMA = (
     "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 )
+SCIM_ENTERPRISE_SCHEMA = (
+    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+)
+ENTERPRISE_FIELDS = {
+    "employeeNumber", "costCenter", "organization", "division", "department", "manager"
+}
 
 ALLOWED_FIELDS = {
     "userName", "externalId", "displayName",
@@ -109,7 +115,20 @@ def normalize_user(payload, existing=None):
         raise ValueError("active must be a boolean")
 
     result.setdefault("active", True)
+    extension = payload.get(SCIM_ENTERPRISE_SCHEMA)
+    if extension is not None:
+        if not isinstance(extension, dict):
+            raise ValueError("Enterprise extension must be an object")
+        current = dict(result.get(SCIM_ENTERPRISE_SCHEMA) or {})
+        for key in ENTERPRISE_FIELDS:
+            if key in extension:
+                current[key] = extension[key]
+        if current:
+            result[SCIM_ENTERPRISE_SCHEMA] = current
+
     result["schemas"] = [SCIM_USER_SCHEMA]
+    if result.get(SCIM_ENTERPRISE_SCHEMA):
+        result["schemas"].append(SCIM_ENTERPRISE_SCHEMA)
 
     return result
 
@@ -118,6 +137,8 @@ def serialize_user(row):
     user = dict(row["attributes"])
     user["id"] = str(row["id"])
     user["schemas"] = [SCIM_USER_SCHEMA]
+    if user.get(SCIM_ENTERPRISE_SCHEMA):
+        user["schemas"].append(SCIM_ENTERPRISE_SCHEMA)
     user["meta"] = {
         "resourceType": "User",
         "created": row["created_at"].isoformat(),
@@ -364,6 +385,16 @@ def patch_user(user_id):
                         )
 
                     for key, item in value.items():
+                        if key == SCIM_ENTERPRISE_SCHEMA:
+                            if not isinstance(item, dict):
+                                raise ValueError("Invalid enterprise extension")
+                            ext = dict(user.get(SCIM_ENTERPRISE_SCHEMA) or {})
+                            for attr, attr_value in item.items():
+                                if attr not in ENTERPRISE_FIELDS:
+                                    raise ValueError("Unsupported enterprise attribute")
+                                ext[attr] = attr_value
+                            user[SCIM_ENTERPRISE_SCHEMA] = ext
+                            continue
                         field = field_names.get(key.lower())
 
                         if field is None:
@@ -391,6 +422,23 @@ def patch_user(user_id):
                     else:
                         user[field] = value
 
+                    continue
+
+                if path.lower().startswith(SCIM_ENTERPRISE_SCHEMA.lower() + ":"):
+                    attr = path[len(SCIM_ENTERPRISE_SCHEMA) + 1:]
+                    enterprise_names = {k.lower(): k for k in ENTERPRISE_FIELDS}
+                    attr = enterprise_names.get(attr.lower())
+                    if attr is None:
+                        raise ValueError("Unsupported enterprise PATCH path")
+                    ext = dict(user.get(SCIM_ENTERPRISE_SCHEMA) or {})
+                    if action == "remove":
+                        ext.pop(attr, None)
+                    else:
+                        ext[attr] = value
+                    if ext:
+                        user[SCIM_ENTERPRISE_SCHEMA] = ext
+                    else:
+                        user.pop(SCIM_ENTERPRISE_SCHEMA, None)
                     continue
 
                 if path.lower().startswith("name."):
