@@ -35,7 +35,7 @@ ALLOWED_FIELDS = {
     "userName", "externalId", "displayName",
     "name", "emails", "phoneNumbers", "active",
     "title", "nickName", "preferredLanguage",
-    "locale", "timezone"
+    "locale", "timezone", "department"
 }
 
 
