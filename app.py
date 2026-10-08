@@ -93,6 +93,37 @@ def authenticate_scim():
         return scim_error(401, "Unauthorized")
 
 
+@app.before_request
+def log_scim_attribute_names():
+    """Temporary lab diagnostics: log attribute names, never values or credentials."""
+    if request.method not in ("POST", "PUT", "PATCH"):
+        return
+    if not request.path.startswith("/scim/v2/Users"):
+        return
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        app.logger.info("SCIM_DIAG method=%s invalid_json", request.method)
+        return
+    keys = sorted(str(k) for k in payload.keys())
+    enterprise = payload.get(SCIM_ENTERPRISE_SCHEMA)
+    enterprise_keys = sorted(str(k) for k in enterprise.keys()) if isinstance(enterprise, dict) else []
+    ops = payload.get("Operations")
+    op_summaries = []
+    if isinstance(ops, list):
+        for op in ops:
+            if not isinstance(op, dict):
+                continue
+            value = op.get("value")
+            value_keys = sorted(str(k) for k in value.keys()) if isinstance(value, dict) else []
+            ext = value.get(SCIM_ENTERPRISE_SCHEMA) if isinstance(value, dict) else None
+            ext_keys = sorted(str(k) for k in ext.keys()) if isinstance(ext, dict) else []
+            path = op.get("path")
+            # Only record whether a path targets department, never arbitrary path contents.
+            path_kind = "department" if isinstance(path, str) and path.lower().endswith("department") else ("other" if path else "none")
+            op_summaries.append({"op": str(op.get("op", "")).lower(), "path_kind": path_kind, "value_keys": value_keys, "enterprise_keys": ext_keys})
+    app.logger.warning("SCIM_DIAG method=%s keys=%s enterprise_keys=%s operations=%s", request.method, keys, enterprise_keys, op_summaries)
+
+
 def normalize_user(payload, existing=None):
     if not isinstance(payload, dict):
         raise ValueError("Expected a SCIM user object")
